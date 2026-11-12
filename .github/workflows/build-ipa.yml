@@ -6,8 +6,8 @@ on:
 jobs:
   build:
     name: Build unsigned IPA
-    runs-on: macos-14
-    timeout-minutes: 60
+    runs-on: macos-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -17,10 +17,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Prebuild iOS project
         run: npx expo prebuild --platform ios --clean --no-install
@@ -30,11 +29,6 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: Show schemes
-        run: |
-          cd ios
-          xcodebuild -list -workspace *.xcworkspace
-
       - name: Build unsigned .app
         run: |
           set -o pipefail
@@ -42,7 +36,7 @@ jobs:
           WORKSPACE=$(ls -d *.xcworkspace | head -1)
           SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" -json 2>/dev/null \
             | python3 -c "import json,sys; d=json.load(sys.stdin)['workspace']; print(d['schemes'][0])")
-          echo "Workspace: $WORKSPACE / Scheme: $SCHEME"
+          echo "Workspace=$WORKSPACE Scheme=$SCHEME"
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -54,25 +48,29 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGN_ENTITLEMENTS="" \
             EXPANDED_CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO \
             build
 
       - name: Package into IPA
         run: |
           set -e
           APP_PATH=$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
-          echo "Found app: $APP_PATH"
+          echo "Found: $APP_PATH"
           if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
           APP_NAME=$(basename "$APP_PATH")
           mkdir -p out/Payload
           cp -R "$APP_PATH" "out/Payload/$APP_NAME"
           cd out
-          zip -qry "../别忘了-unsigned.ipa" Payload
+          zip -qry "../biewangliao-unsigned.ipa" Payload
           cd ..
-          ls -lh "别忘了-unsigned.ipa"
+          ls -lh biewangliao-unsigned.ipa
+          # 校验是否含真实可执行
+          EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "out/Payload/$APP_NAME/Info.plist")
+          file "out/Payload/$APP_NAME/$EXEC_NAME"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: biewangliao-unsigned-ipa
-          path: 别忘了-unsigned.ipa
+          path: biewangliao-unsigned.ipa
           retention-days: 30
