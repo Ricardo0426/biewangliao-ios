@@ -1,0 +1,78 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prebuild iOS project
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Show schemes
+        run: |
+          cd ios
+          xcodebuild -list -workspace *.xcworkspace
+
+      - name: Build unsigned .app
+        run: |
+          set -o pipefail
+          cd ios
+          WORKSPACE=$(ls -d *.xcworkspace | head -1)
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" -json 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['workspace']; print(d['schemes'][0])")
+          echo "Workspace: $WORKSPACE / Scheme: $SCHEME"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package into IPA
+        run: |
+          set -e
+          APP_PATH=$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "Found app: $APP_PATH"
+          if [ -z "$APP_PATH" ]; then echo "No .app produced"; exit 1; fi
+          APP_NAME=$(basename "$APP_PATH")
+          mkdir -p out/Payload
+          cp -R "$APP_PATH" "out/Payload/$APP_NAME"
+          cd out
+          zip -qry "../别忘了-unsigned.ipa" Payload
+          cd ..
+          ls -lh "别忘了-unsigned.ipa"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: biewangliao-unsigned-ipa
+          path: 别忘了-unsigned.ipa
+          retention-days: 30
